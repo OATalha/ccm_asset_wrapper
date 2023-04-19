@@ -1,0 +1,20 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+.*/
+.*
+!.gitignore
+!.dockerfile
+!.github/
+
+# virtual environment
+venv*/
+
+# setuptools
+dist/
+build/
+*.egg-info/
+core/third_party/
+core/oa_anm_core/build/
