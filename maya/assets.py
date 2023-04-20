@@ -1,6 +1,7 @@
 import re
+import os
 
-from abc import ABC, abstractclassmethod, abstractmethod
+from abc import ABC, abstractclassmethod
 from typing import Type, List, Dict
 import maya.cmds as cmds
 
@@ -10,10 +11,15 @@ def simple_node_name(node):
 
 
 def has_same_reference(node1, node2):
-    if not cmds.referenceQuery(node1, isNodeReferenced=True):
+    node1_is_ref = cmds.referenceQuery(node1, isNodeReferenced=True)
+    node2_is_ref = cmds.referenceQuery(node2, isNodeReferenced=True)
+
+    if not (node1_is_ref or node2_is_ref):
+        return True
+
+    if not (node1_is_ref and node2_is_ref):
         return False
-    if not cmds.referenceQuery(node2, isNodeReferenced=True):
-        return False
+
     return cmds.referenceQuery(node1, rfn=True) == cmds.referenceQuery(
         node2, rfn=True
     )
@@ -22,22 +28,26 @@ def has_same_reference(node1, node2):
 def get_descendants_by_type(node, typ) -> List[str]:
     objects = cmds.ls(node, dag=True, type=typ, l=True) or []
     if type != "transform":
-        objects = cmds.listRelatives(objects, parent=True, f=True) or []
+        objects = (
+            cmds.listRelatives(objects, parent=True, type="transform", f=True)
+            or []
+        )
     return objects
 
 
 def get_ancestors(node):
     ancestors = []
-    parents = cmds.listRelatives(node, parent=True) or []
-    while parents:
-        ancestors.append(parents[0])
-        parents = cmds.listRelatives(parents[0], parent=True) or []
+    long_name = cmds.ls(node, l=True) or []
+    parent = long_name[0].rsplit("|", 1)[0] if long_name else ""
+    while parent:
+        ancestors.append(parent)
+        parent = parent.rsplit("|", 1)[0]
     return ancestors
 
 
-def filter_from_children(node, name_pattern, typ="transform"):
+def filter_from_children(node, name_pattern=".*", typ="transform"):
     retval = []
-    children = cmds.listRelatives(node, children=True, type=typ) or []
+    children = cmds.listRelatives(node, children=True, type=typ, f=True) or []
     for child in children:
         if re.match(name_pattern, child):
             retval.append(child)
@@ -45,29 +55,36 @@ def filter_from_children(node, name_pattern, typ="transform"):
 
 
 class MayaAssetFactory:
-
     @classmethod
-    def find_assets(cls, nodes=None) -> List["MayaAsset"]:
+    def find_assets(cls, include_ref=False) -> List["MayaAsset"]:
+        assert not include_ref, "include ref is not supported at this time"
         assets = []
-        if nodes is None:
-            root_transforms = cmds.ls("|*", type="transform") or []
-        for rt in root_transforms:
+        nodes = cmds.ls("|*", type="transform", l=True) or []
+        for rt in nodes:
             asset = cls.get_asset(rt)
             if asset:
                 assets.append(asset)
         return assets
 
     @classmethod
-    def get_asset(cls, obj):
-        for subc in cls.asset_types().values():
+    def get_asset(cls, obj, path=None):
+        if path is None:
+            path = cmds.file(q=True, sn=True)
+        asset_cls = cls.get_asset_cls_from_path(path)
+        if asset_cls:
+            asset_types = [asset_cls, GenericAsset]
+        else:
+            asset_types = cls.asset_types()
+        for subc in asset_types:
             if subc.validate(obj):
                 return subc(obj)
 
     @classmethod
-    def asset_types(cls) -> Dict[str, Type["MayaAsset"]]:
-        types = {}
+    def asset_types(cls) -> List[Type["MayaAsset"]]:
+        types = []
         for subc in MayaAsset.__subclasses__():
-            types[subc.asset_type] = subc
+            if subc.asset_type:
+                types.append(subc)
         return types
 
     @classmethod
@@ -78,10 +95,12 @@ class MayaAssetFactory:
         for obj in selected:
             is_referenced = cmds.referenceQuery(obj, isNodeReferenced=True)
             ancestors = get_ancestors(obj)
+
             if not is_referenced:
                 roots.append(ancestors[-1])
                 continue
             root = obj
+
             for anc in ancestors:
                 if not has_same_reference(obj, anc):
                     break
@@ -95,12 +114,24 @@ class MayaAssetFactory:
 
         return assets
 
+    @classmethod
+    def get_asset_cls_from_path(cls, path):
+        path = os.path.normpath(path)
+        for asset_cls in cls.asset_types():
+            asset_type = asset_cls.asset_type
+            if asset_type == "unknown":
+                continue
+            asset_type_re = rf"{os.path.sep}{asset_type}{os.path.sep}"
+            if re.findall(asset_type_re, asset_type):
+                return asset_cls
+
 
 class MayaAsset(ABC):
     asset_type: str
 
     def __init__(self, root: str):
         self.root = root
+        self.auxiliary_roots = []
 
     def __repr__(self):
         return f'{self.__class__.__name__}("{self.root}")'
@@ -109,14 +140,27 @@ class MayaAsset(ABC):
     def validate(self, node: str) -> bool:
         ...
 
+    def add_auxiliary_root(self, obj):
+        if obj not in self.auxiliary_roots:
+            self.auxiliary_roots.append(obj)
+
     def get_geo(self) -> List[str]:
-        return get_descendants_by_type(self.root, typ="mesh")
+        geos = get_descendants_by_type(self.root, typ="mesh")
+        for root in self.auxiliary_roots:
+            geos.extend(get_descendants_by_type(root, typ="mesh"))
+        return geo
 
     def get_controls(self) -> List[str]:
-        return get_descendants_by_type(self.root, typ="nurbsCurve")
+        controls = get_descendants_by_type(self.root, typ="nurbsCurve")
+        for root in self.auxiliary_roots:
+            controls.extend(get_descendants_by_type(root, typ="nurbsCurve"))
+        return controls
 
     def get_joints(self) -> List[str]:
-        return get_descendants_by_type(self.root, typ="joint")
+        joints = get_descendants_by_type(self.root, typ="joint")
+        for root in self.auxiliary_roots:
+            joints.extend(get_descendants_by_type(root, typ="joint"))
+        return joints
 
     def is_referenced(self) -> bool:
         return cmds.referenceQuery(  # type: ignore
@@ -139,6 +183,12 @@ class MayaAsset(ABC):
 class CharacterAsset(MayaAsset):
     asset_type = "char"
 
+    geo_re = "(?i)geo_grp"
+    ctls_re = "(?i)ctls_grp"
+    rig_re = "(?i)rig_grp"
+
+    root_ctrl_re = "TSM3_root"
+
     @classmethod
     def validate(cls, node):
         if not cmds.objectType(node) == "transform":
@@ -147,31 +197,41 @@ class CharacterAsset(MayaAsset):
             cmds.listRelatives(node, children=True, type="transform", f=True)
             or []
         )
-        if not any(child.endswith("geo_grp") for child in children):
-            return False
-        if not any(child.endswith("ctls_grp") for child in children):
-            return False
-        if not any(child.endswith("rig_grp") for child in children):
+        if not any(
+            re.match(cls.geo_re, simple_node_name(child)) for child in children
+        ):
             return False
         return True
 
     def geo_grp(self):
-        return filter_from_children(self.root, ".*geo_grp")[0]
+        return filter_from_children(self.root, self.geo_re)[0]
 
     def ctls_grp(self):
-        return filter_from_children(self.root, ".*ctls_grp")[0]
+        filtered = filter_from_children(self.root, self.ctls_re)[0]
+        if filtered:
+            return filtered[0]
 
     def rig_grp(self):
-        return filter_from_children(self.root, "*rig_grp")[0]
+        filtered = filter_from_children(self.root, self.rig_re)[0]
+        if filtered:
+            return filtered[0]
 
     def get_geo(self) -> List[str]:
         return get_descendants_by_type(self.geo_grp(), typ="mesh")
 
     def get_controls(self) -> List[str]:
-        return get_descendants_by_type(self.ctls_grp(), typ="mesh")
+        controls = []
+        ctls_grp = self.ctls_grp()
+        if ctls_grp:
+            controls = get_descendants_by_type(ctls_grp, typ="mesh")
+        return controls
 
     def get_joints(self) -> List[str]:
-        return get_descendants_by_type(self.rig_grp(), typ="joint")
+        joints = []
+        rig_grp = self.rig_grp()
+        if rig_grp:
+            joints = get_descendants_by_type(rig_grp, typ="joint")
+        return joints
 
 
 class PropAsset(MayaAsset):
