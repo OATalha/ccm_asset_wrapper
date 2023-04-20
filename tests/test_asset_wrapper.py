@@ -40,9 +40,10 @@ def set_logging():
 set_logging()
 
 
-def print_assets():
+def log_assets():
     for asset in assets.MayaAssetFactory.find_assets():
         logger.info(f"Asset Found: {asset}")
+        print(f"Asset Found: {asset}")
 
 
 def open_file(path):
@@ -74,13 +75,20 @@ def test_chars():
     logger.info("Executing test_chars")
     for char_ma in get_asset_files(asset_type="char"):
         open_file(char_ma)
-        print_assets()
+        log_assets()
 
 
 def test_jj():
     logger.info("Executing test_jj")
     jj = "/Volumes/data/PROJECTS_MAYA/CCMTEST/Downloads/cocomelon/assets/char/jj/jjDefault_RIG.ma"
-    print_assets()
+    log_assets()
 
 
-test_chars()
+def test_props():
+    logger.info("Executing test_props")
+    for ma in get_asset_files(asset_type="prop"):
+        open_file(ma)
+        log_assets()
+
+
+test_props()

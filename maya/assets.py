@@ -73,8 +73,11 @@ class MayaAssetFactory:
         asset_cls = cls.get_asset_cls_from_path(path)
         if asset_cls:
             asset_types = [asset_cls, GenericAsset]
+            if asset_cls.asset_type == "prop":
+                asset_types.append(CharacterAsset)
         else:
             asset_types = cls.asset_types()
+
         for subc in asset_types:
             if subc.validate(obj):
                 return subc(obj)
@@ -122,7 +125,7 @@ class MayaAssetFactory:
             if asset_type == "unknown":
                 continue
             asset_type_re = rf"{os.path.sep}{asset_type}{os.path.sep}"
-            if re.findall(asset_type_re, asset_type):
+            if re.findall(asset_type_re, path):
                 return asset_cls
 
 
@@ -236,14 +239,14 @@ class CharacterAsset(MayaAsset):
 
 class PropAsset(MayaAsset):
     asset_type = "prop"
-    name_re = r"(?i)(.*)_glbl\d?$"
+    name_re = r"(?i)(.*)((_gl?bl)|(_ctrl))\d?"
 
     @classmethod
     def validate(cls, node: str):
         if not cmds.objectType(node) == "transform":
             return False
         if not cmds.listRelatives(
-            children=True, shapes=True, ni=True, type="nurbsCurve"
+            node, children=True, ni=True, shapes=True, type="nurbsCurve"
         ):
             return False
         node_name = simple_node_name(node)
