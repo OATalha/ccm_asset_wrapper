@@ -91,4 +91,11 @@ def test_props():
         log_assets()
 
 
-test_props()
+def test_envs():
+    logger.info("Executing test_envs")
+    for ma in get_asset_files(asset_type="envr"):
+        open_file(ma)
+        log_assets()
+
+
+test_envs()
